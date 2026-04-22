@@ -54,26 +54,42 @@ If you want the shortest possible explanation of the generator, it is this:
 7. Keep only part of the downstream table to mimic incomplete test coverage.
 
 That is the heart of the project. Everything else is support code around this flow.
-
 ## Physical Model
 
 The resonance model is first-order and intentionally simple:
 
-```text
-lambda = lambda0 + alpha * (t_true - t0) + beta * (w_true - w0) + noise
-```
+$$
+\lambda_i = \lambda_0 + \alpha (t_i - t_0) + \beta (w_i - w_0) + \eta_i^{(\lambda)}
+$$
 
-with defaults:
+where:
 
-- `alpha = 1.25 nm/nm`
-- `beta = 1.08 nm/nm`
+- $\lambda_i$ is the resonance wavelength for device $i$
+- $\lambda_0$ is the nominal resonance wavelength
+- $t_i$ and $w_i$ are the true thickness and true width
+- $t_0$ and $w_0$ are the nominal thickness and width
+- $\alpha$ and $\beta$ are sensitivity coefficients
+- $\eta_i^{(\lambda)}$ is a noise term
 
-The quality factor is modeled separately with a simple log-linear rule:
+Default coefficients used in this notebook:
 
-```text
-log(Q) = log(q0) - k_r * roughness - k_d * defect_density + noise
-```
+- $\alpha = 1.25\,\text{nm/nm}$
+- $\beta = 1.08\,\text{nm/nm}$
 
+The quality factor is modeled separately using a simple log-linear rule:
+
+$$
+\log Q_i = \log Q_0 - k_r r_i - k_d d_i + \eta_i^{(Q)}
+$$
+
+where:
+
+- $Q_i$ is the loaded quality factor for device $i$
+- $Q_0$ is the nominal quality factor
+- $r_i$ is a roughness-related degradation term
+- $d_i$ is a defect-density-related degradation term
+- $k_r$ and $k_d$ are degradation coefficients
+- $\eta_i^{(Q)}$ is a noise term
 In the current notebook, `Q` mainly matters for the missingness logic, not for the main
 prediction target.
 
