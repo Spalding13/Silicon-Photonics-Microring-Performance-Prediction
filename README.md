@@ -131,9 +131,11 @@ Main public columns:
 
 Important:
 
-- latent columns such as `w_true`, `t_true`, `lambda_true`, and `q_true` are not part of the
-  public inline table
-- this is deliberate, so the modeling workflow is leakage-safe by default
+The generator internally creates latent “true” quantities such as `w_true`, `t_true`, `lambda_true`, and `q_true`. These variables represent the hidden physical state of the synthetic device before measurement noise, test filtering, and downstream sampling are applied.
+
+They are intentionally **not included in the public inline table**. The reason is that the modeling workflow should only use quantities that would realistically be observable through inline metrology. If latent true variables were exposed as input features, the prediction task would become unrealistically easy and the workflow would suffer from data leakage.
+
+In other words, the generator first creates an internal physical ground truth, and then produces noisy, incomplete observed data from it. This separation is deliberate: it makes the synthetic setup more realistic and keeps the regression task leakage-safe by default.
 
 ### Downstream wafer test
 
