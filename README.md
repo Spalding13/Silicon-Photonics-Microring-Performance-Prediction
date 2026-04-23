@@ -26,7 +26,7 @@ The project generates two tables:
 1. `inline_metrology.csv`
    One row per die with noisy inline measurements.
 2. `downstream_wafer_test.csv`
-   One row per die that was sampled for downstream test.
+   One row per die with a usable downstream test record.
 
 Then it trains a few baseline regression models to predict:
 
@@ -208,19 +208,61 @@ records, so the target is always defined on the merged table.
 ## Repository Structure
 
 ```text
+pyproject.toml          packaging and project dependencies
+README.md               project overview and reading guide
+
+data/
+  synthetic_inline_metrology.csv
+  synthetic_downstream_wafer_test.csv
+
 src/
   physics.py      parameters and simple physics-inspired equations
-  generator.py    synthetic data generation
-  utils.py        CSV I/O, schema checks, and a few plotting helpers
+  generator.py    synthetic data generation and downstream sampling
+  utils.py        CSV I/O, schema checks, merge helpers, and plots
   models.py       baseline models
 
 tests/
-  test_generator.py
+  test_generator.py     generator, schema, lattice, and model tests
 
 notebooks/
-  analysis.ipynb
-  wafermap_downstream_status.ipynb
+  analysis.ipynb                    end-to-end modeling notebook
+  wafermap_downstream_status.ipynb  wafer-map EDA notebook
 ```
+
+## Notebook Guide
+
+The two notebooks have different jobs and are meant to complement each other.
+
+### `analysis.ipynb`
+
+This is the main end-to-end notebook. It:
+
+- follows the sequence:
+  setup -> physical model -> data generation -> summary -> EDA -> model training -> experiments -> discussion
+- defines the physical parameters
+- generates the synthetic dataset
+- saves the public CSV files into `data/`
+- prints summary statistics
+- runs EDA for the inline and downstream variables
+- trains the three baseline models
+- evaluates them with `GroupKFold` by `wafer_id`
+- runs a simple noise robustness experiment
+
+If you want the full project story in one place, start here.
+
+### `wafermap_downstream_status.ipynb`
+
+This notebook is narrower and more visual. It:
+
+- loads the saved CSV files from `data/`
+- left-joins inline and downstream tables
+- assigns each die one of three public downstream states:
+  `Pass downstream spec`, `Fail downstream spec`, or `Not tested downstream`
+- prints a reason breakdown for those states
+- shows a single-wafer `lambda_res_nm` die map
+- shows all wafers as categorical wafer maps
+
+If you want to understand spatial coverage and downstream status at the die level, start here.
 
 ## How To Read The Project
 
@@ -231,11 +273,12 @@ If you want to understand the project quickly, this is the best order:
 2. Read `src/generator.py`
    Focus on `_generate_wafer()` and `_apply_downstream_sampling()`.
 3. Open `notebooks/analysis.ipynb`
-   This shows how the generated tables are used for regression.
+   This shows the main workflow: generation, EDA, modeling, and evaluation.
 4. Open `notebooks/wafermap_downstream_status.ipynb`
-   This shows how to inspect pass/fail/not-tested status spatially from saved CSVs.
+   This shows how to inspect die-level wafer maps from the saved CSV files.
 5. Read `tests/test_generator.py`
    This is a good way to see what behavior the code is supposed to guarantee.
+   It also documents the current lattice-based wafer layout assumption.
 
 ## How To Run
 
@@ -244,8 +287,16 @@ pip install -e .
 jupyter notebook notebooks/analysis.ipynb
 ```
 
-The main notebook regenerates the synthetic data, runs the models, and produces the figures.
-The wafer map notebook loads the saved CSV files and focuses on EDA of downstream status.
+The main notebook regenerates the synthetic data, runs the models, and writes the public
+CSV files into `data/`.
+
+If you want to open the wafer-map notebook directly after that, use:
+
+```bash
+jupyter notebook notebooks/wafermap_downstream_status.ipynb
+```
+
+The wafer map notebook assumes the CSV files already exist in `data/`.
 
 ## What To Expect From The Results
 
