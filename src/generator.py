@@ -100,9 +100,12 @@ class SyntheticMRRDataGenerator:
         
         test_station_id = f"TS{wafer_rng.choice([1, 2, 3])}"
         
-        coords = self._generate_die_coordinates(n_dies, wafer_rng)
-        x_coords = coords[:, 0]
-        y_coords = coords[:, 1]
+        die_lattice = self._generate_die_coordinates(n_dies)
+        x_coords = die_lattice['x_mm'].to_numpy()
+        y_coords = die_lattice['y_mm'].to_numpy()
+        r_coords = die_lattice['r_mm'].to_numpy()
+        die_rows = die_lattice['grid_row'].to_numpy()
+        die_cols = die_lattice['grid_col'].to_numpy()
         
         field_radial = generate_radial_spatial_field(
             x_coords, y_coords, 
@@ -129,10 +132,10 @@ class SyntheticMRRDataGenerator:
         
         die_records = []
         for die_idx in range(n_dies):
-            die_id = f"D_R{die_idx // 20:03d}_C{die_idx % 20:03d}"
+            die_id = f"D_R{int(die_rows[die_idx]):03d}_C{int(die_cols[die_idx]):03d}"
             x_mm = x_coords[die_idx]
             y_mm = y_coords[die_idx]
-            r_mm = np.sqrt(x_mm**2 + y_mm**2)
+            r_mm = r_coords[die_idx]
             
             epsilon_w = wafer_rng.normal(0, self.params.sigma_w_die)
             epsilon_t = wafer_rng.normal(0, self.params.sigma_t_die)
@@ -222,49 +225,43 @@ class SyntheticMRRDataGenerator:
         p_sample: float = 0.5,
         mnar_intensity: float = 1.0,
     ) -> pd.DataFrame:
-        """Sample downstream tests and keep both valid and invalid sampled rows."""
+        """Sample downstream tests and return only usable public test records."""
         rng = np.random.RandomState(self.seed + 1000)
         
         n = len(df_all)
         
         sampled_indices = rng.choice(n, size=int(np.ceil(n * p_sample)), replace=False)
-        df_downstream = df_all.iloc[sampled_indices].copy()
+        df_sampled = df_all.iloc[sampled_indices].copy()
 
-        df_downstream['lambda_res_nm'] = (
-            df_downstream['lambda_true']
-            + rng.normal(0, self.params.sigma_lambda_meas, size=len(df_downstream))
+        df_sampled['lambda_res_nm'] = (
+            df_sampled['lambda_true']
+            + rng.normal(0, self.params.sigma_lambda_meas, size=len(df_sampled))
         )
-        df_downstream['q_loaded'] = np.exp(
-            np.log(df_downstream['q_true'])
-            + rng.normal(0, self.params.sigma_q_meas, size=len(df_downstream))
+        df_sampled['q_loaded'] = np.exp(
+            np.log(df_sampled['q_true'])
+            + rng.normal(0, self.params.sigma_q_meas, size=len(df_sampled))
         )
-        df_downstream['insertion_loss_db'] = (
-            5.0 + (np.log(self.params.q0) - np.log(df_downstream['q_true'])) * 0.1
+        df_sampled['insertion_loss_db'] = (
+            5.0 + (np.log(self.params.q0) - np.log(df_sampled['q_true'])) * 0.1
         )
 
-        failure_bias = -2.2
-        failure_scale = 8.0 * mnar_intensity
-        log_q_true = np.log(df_downstream['q_true'].values)
+        missing_bias = -2.2
+        missing_scale = 8.0 * mnar_intensity
+        log_q_true = np.log(df_sampled['q_true'].values)
         log_q_thresh = np.log(self.params.q_mnar_threshold)
-        failure_logits = failure_bias + failure_scale * (log_q_thresh - log_q_true)
-        failure_probs = 1.0 / (1.0 + np.exp(-failure_logits))
+        missing_logits = missing_bias + missing_scale * (log_q_thresh - log_q_true)
+        missing_probs = 1.0 / (1.0 + np.exp(-missing_logits))
+        keep_mask = rng.uniform(0, 1, size=len(df_sampled)) > missing_probs
 
-        df_downstream['test_valid'] = (
-            rng.uniform(0, 1, size=len(df_downstream)) > failure_probs
-        ).astype(int)
-
-        valid_mask = df_downstream['test_valid'] == 1
+        df_downstream = df_sampled.loc[keep_mask].copy()
+        df_downstream['test_valid'] = 1
         df_downstream['test_pass'] = (
-            valid_mask
-            & df_downstream['lambda_res_nm'].between(
+            df_downstream['lambda_res_nm'].between(
                 self.params.lambda_spec_min,
                 self.params.lambda_spec_max,
             )
             & (df_downstream['q_loaded'] >= self.params.q_spec_min)
         ).astype(int)
-
-        invalid_cols = ['lambda_res_nm', 'q_loaded', 'insertion_loss_db']
-        df_downstream.loc[~valid_mask, invalid_cols] = np.nan
 
         cols_to_keep = [
             'wafer_id',
@@ -281,23 +278,45 @@ class SyntheticMRRDataGenerator:
     def _generate_die_coordinates(
         self,
         n_dies: int,
-        rng: np.random.RandomState,
-    ) -> np.ndarray:
-        """Generate random die positions inside a circular wafer."""
+    ) -> pd.DataFrame:
+        """Generate a regular die lattice clipped to a circular wafer."""
         wafer_radius_mm = 75.0
         edge_exclusion_mm = 5.0
-        
         effective_radius = wafer_radius_mm - edge_exclusion_mm
-        
-        coords = []
-        while len(coords) < n_dies:
-            r = np.sqrt(rng.uniform(0, effective_radius**2))
-            theta = rng.uniform(0, 2 * np.pi)
-            x = r * np.cos(theta)
-            y = r * np.sin(theta)
-            coords.append([x, y])
-        
-        return np.array(coords[:n_dies])
+
+        grid_side = int(np.ceil(np.sqrt(n_dies * 4.0 / np.pi)))
+        while True:
+            axis = np.linspace(-effective_radius, effective_radius, grid_side)
+            x_grid, y_grid = np.meshgrid(axis, axis)
+            r_grid = np.sqrt(x_grid**2 + y_grid**2)
+            inside_mask = r_grid <= effective_radius + 1e-9
+            if int(np.count_nonzero(inside_mask)) >= n_dies:
+                break
+            grid_side += 1
+
+        center_index = 0.5 * (grid_side - 1)
+        candidates = pd.DataFrame({
+            'grid_row': np.repeat(np.arange(grid_side), grid_side),
+            'grid_col': np.tile(np.arange(grid_side), grid_side),
+            'x_mm': x_grid.ravel(),
+            'y_mm': y_grid.ravel(),
+            'r_mm': r_grid.ravel(),
+        })
+        candidates = candidates[candidates['r_mm'] <= effective_radius + 1e-9].copy()
+        candidates['row_center_dist'] = np.abs(candidates['grid_row'] - center_index)
+        candidates['col_center_dist'] = np.abs(candidates['grid_col'] - center_index)
+
+        # Keep the most central lattice sites so the footprint stays round-ish.
+        selected = (
+            candidates
+            .sort_values(
+                ['r_mm', 'row_center_dist', 'col_center_dist', 'grid_row', 'grid_col']
+            )
+            .head(n_dies)
+            .sort_values(['grid_row', 'grid_col'])
+            .reset_index(drop=True)
+        )
+        return selected[['grid_row', 'grid_col', 'x_mm', 'y_mm', 'r_mm']]
     
     def validate_and_summarize(
         self,
@@ -305,20 +324,26 @@ class SyntheticMRRDataGenerator:
         df_downstream: pd.DataFrame,
     ) -> Dict[str, Any]:
         """Return a small set of summary statistics for the two tables."""
-        valid_downstream = df_downstream[df_downstream['test_valid'] == 1].copy()
+        valid_downstream = df_downstream.copy()
 
         stats = {
             'n_dies_inline': len(df_inline),
             'n_dies_downstream': len(df_downstream),
             'n_dies_downstream_valid': len(valid_downstream),
-            'n_dies_downstream_invalid': int((df_downstream['test_valid'] == 0).sum()),
+            'n_dies_downstream_invalid': 0,
             'n_dies_downstream_pass': int((valid_downstream['test_pass'] == 1).sum()),
             'n_dies_downstream_fail': int((valid_downstream['test_pass'] == 0).sum()),
+            'n_dies_not_tested': max(len(df_inline) - len(df_downstream), 0),
             'coverage_pct': 100.0 * len(df_downstream) / len(df_inline) if len(df_inline) else 0.0,
             'valid_coverage_pct': 100.0 * len(valid_downstream) / len(df_inline) if len(df_inline) else 0.0,
             'n_wafers': df_inline['wafer_id'].nunique(),
             'n_lots': df_inline['lot_id'].nunique(),
         }
+        stats['not_tested_pct'] = (
+            100.0 * stats['n_dies_not_tested'] / len(df_inline)
+            if len(df_inline)
+            else 0.0
+        )
         stats['pass_rate_valid_pct'] = (
             100.0 * stats['n_dies_downstream_pass'] / len(valid_downstream)
             if len(valid_downstream)

@@ -138,24 +138,15 @@ def validate_schemas(
             if col in df_downstream.columns and df_downstream[col].isna().any():
                 errors.append(f"Downstream test column '{col}' contains NaN values")
 
-        if 'test_valid' in df_downstream.columns and not df_downstream['test_valid'].isin([0, 1]).all():
-            errors.append("Downstream test column 'test_valid' must contain only 0/1 values")
+        if 'test_valid' in df_downstream.columns and not df_downstream['test_valid'].isin([1]).all():
+            errors.append("Public downstream rows should all have test_valid = 1")
         if 'test_pass' in df_downstream.columns and not df_downstream['test_pass'].isin([0, 1]).all():
             errors.append("Downstream test column 'test_pass' must contain only 0/1 values")
 
-        if 'test_valid' in df_downstream.columns:
-            valid_mask = df_downstream['test_valid'] == 1
-            invalid_mask = ~valid_mask
-        else:
-            valid_mask = pd.Series(True, index=df_downstream.index)
-            invalid_mask = pd.Series(False, index=df_downstream.index)
-
         measured_cols = ['lambda_res_nm', 'q_loaded', 'insertion_loss_db']
         for col in measured_cols:
-            if col in df_downstream.columns and df_downstream.loc[valid_mask, col].isna().any():
-                errors.append(f"Valid downstream rows must have non-null '{col}' values")
-            if col in df_downstream.columns and df_downstream.loc[invalid_mask, col].notna().any():
-                errors.append(f"Invalid downstream rows should not contain measured '{col}' values")
+            if col in df_downstream.columns and df_downstream[col].isna().any():
+                errors.append(f"Downstream test column '{col}' contains NaN values")
     
     if not df_inline.empty and not df_downstream.empty:
         if 'wafer_id' not in df_inline.columns or 'die_id' not in df_inline.columns:

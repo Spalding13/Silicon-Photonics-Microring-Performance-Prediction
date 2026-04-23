@@ -14,9 +14,10 @@ The code is intentionally centered on a simple idea:
 
 - resonance wavelength depends mostly on waveguide width and silicon thickness
 - wafers have smooth spatial variation, not pure random noise
+- dies sit on a regular lattice clipped by a circular wafer footprint
 - inline measurements are noisy
 - downstream test is available only for part of the wafer
-- some sampled downstream tests are invalid, and some valid tests fail spec
+- some downstream tests pass spec and some fail spec
 
 ## What The Project Does
 
@@ -48,12 +49,13 @@ If you want the shortest possible explanation of the generator, it is this:
 1. Start from a nominal design:
    `lambda0 = 1550 nm`, `w0 = 450 nm`, `t0 = 220 nm`
 2. Give each wafer a small width and thickness drift.
-3. Add smooth spatial variation across the wafer.
-4. Add small die-level randomness.
-5. Convert the true width and thickness into a true resonance wavelength with a linear model.
-6. Add measurement noise to create the observed inline and downstream tables.
-7. Sample only part of the dies for downstream test.
-8. Mark some sampled dies as invalid and apply a tighter pass/fail spec to the valid test results.
+3. Place dies on a regular lattice and keep only the sites that fit the wafer footprint.
+4. Add smooth spatial variation across the wafer.
+5. Add small die-level randomness.
+6. Convert the true width and thickness into a true resonance wavelength with a linear model.
+7. Add measurement noise to create the observed inline and downstream tables.
+8. Sample only part of the dies for downstream test.
+9. Apply a tighter downstream pass/fail spec to the tested dies.
 
 That is the heart of the project. Everything else is support code around this flow.
 
@@ -97,7 +99,7 @@ where:
 In the current project, `Q` matters in two places:
 
 - as a measured downstream quantity
-- as part of the invalid-test and pass/fail logic
+- as part of the downstream pass/fail logic
 
 ## What Is Synthetic And What Is Not
 
@@ -107,9 +109,10 @@ It is a synthetic generator with:
 
 - physically motivated parameter values
 - wafer-level and die-level variability
+- a regular die lattice rather than random die positions
 - noisy measurements
 - partial downstream sampling
-- valid, failed, and invalid downstream outcomes
+- downstream pass/fail outcomes plus missing downstream coverage
 
 It is useful as a controlled benchmark, not as a substitute for real process data.
 
@@ -150,7 +153,7 @@ unrealistically easy and the workflow would suffer from data leakage.
 
 ### Downstream wafer test
 
-One row per die that was sampled for downstream test.
+One row per die that has a usable downstream test record.
 
 Main columns:
 
@@ -162,20 +165,19 @@ Main columns:
 | `q_loaded` | Measured loaded Q |
 | `insertion_loss_db` | Measured optical loss |
 | `test_pass` | Pass/fail flag |
-| `test_valid` | Validity flag |
+| `test_valid` | Compatibility flag (always `1` in the public table) |
 
 Notes:
 
-- A sampled die can still have `test_valid = 0`. In that case the test was attempted, but there is no usable downstream measurement.
-- For invalid rows, `lambda_res_nm`, `q_loaded`, and `insertion_loss_db` are left empty on purpose.
-- `test_pass` should be interpreted only when `test_valid = 1`.
-- Dies that were never sampled for downstream test do not appear in this table at all.
+- The public downstream table contains only usable test records.
+- In the current simplified project, `test_valid` is kept for compatibility and is always `1`.
+- Dies that do not appear in this table should simply be interpreted as `Not tested`.
 
 This means a left join from inline to downstream naturally gives three downstream states:
 
 - `Pass`
 - `Fail`
-- `Not tested / no valid downstream record`
+- `Not tested`
 
 That is exactly the status split used in the wafer map EDA notebook.
 
@@ -200,8 +202,8 @@ The main evaluation uses `GroupKFold` by `wafer_id`.
 This matters because dies from the same wafer are correlated. A random row-wise split
 would make the task look easier than it really is.
 
-For regression, the merge helper keeps only `test_valid = 1` rows by default so the
-target is always defined.
+For regression, the merge helper simply joins inline rows with the usable downstream
+records, so the target is always defined on the merged table.
 
 ## Repository Structure
 
@@ -258,9 +260,9 @@ That is expected and is part of the point of the project.
 
 The downstream table should also contain a visible mix of:
 
-- valid pass results
-- valid fail results
-- sampled but invalid rows
+- tested pass results
+- tested fail results
+- not tested dies visible only after left-joining back to inline
 
 This makes wafer maps and missingness analysis more informative.
 
