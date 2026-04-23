@@ -133,11 +133,29 @@ def validate_schemas(
         errors.append(f"Downstream wafer test missing columns: {missing_downstream}")
     
     if not df_downstream.empty:
-        # Check for NaNs in key columns
-        critical_cols = ['wafer_id', 'die_id', 'lambda_res_nm', 'q_loaded']
+        critical_cols = ['wafer_id', 'die_id', 'test_pass', 'test_valid']
         for col in critical_cols:
             if col in df_downstream.columns and df_downstream[col].isna().any():
                 errors.append(f"Downstream test column '{col}' contains NaN values")
+
+        if 'test_valid' in df_downstream.columns and not df_downstream['test_valid'].isin([0, 1]).all():
+            errors.append("Downstream test column 'test_valid' must contain only 0/1 values")
+        if 'test_pass' in df_downstream.columns and not df_downstream['test_pass'].isin([0, 1]).all():
+            errors.append("Downstream test column 'test_pass' must contain only 0/1 values")
+
+        if 'test_valid' in df_downstream.columns:
+            valid_mask = df_downstream['test_valid'] == 1
+            invalid_mask = ~valid_mask
+        else:
+            valid_mask = pd.Series(True, index=df_downstream.index)
+            invalid_mask = pd.Series(False, index=df_downstream.index)
+
+        measured_cols = ['lambda_res_nm', 'q_loaded', 'insertion_loss_db']
+        for col in measured_cols:
+            if col in df_downstream.columns and df_downstream.loc[valid_mask, col].isna().any():
+                errors.append(f"Valid downstream rows must have non-null '{col}' values")
+            if col in df_downstream.columns and df_downstream.loc[invalid_mask, col].notna().any():
+                errors.append(f"Invalid downstream rows should not contain measured '{col}' values")
     
     if not df_inline.empty and not df_downstream.empty:
         if 'wafer_id' not in df_inline.columns or 'die_id' not in df_inline.columns:
@@ -166,11 +184,16 @@ def merge_sources(
     df_inline: pd.DataFrame,
     df_downstream: pd.DataFrame,
     how: str = 'inner',
+    only_valid_downstream: bool = True,
 ) -> pd.DataFrame:
     """Merge inline metrology with downstream test data."""
     df_inline_public = sanitize_inline_metrology(df_inline)
+    df_downstream_public = df_downstream.copy()
 
-    df_merged = df_downstream.merge(
+    if only_valid_downstream and 'test_valid' in df_downstream_public.columns:
+        df_downstream_public = df_downstream_public[df_downstream_public['test_valid'] == 1].copy()
+
+    df_merged = df_downstream_public.merge(
         df_inline_public,
         on=['wafer_id', 'die_id'],
         how=how,

@@ -173,6 +173,25 @@ class TestDataGenerator:
         assert required_cols.issubset(set(df_downstream.columns))
         assert len(df_downstream) <= 100
         assert len(df_downstream) > 0
+
+    def test_downstream_contains_fail_and_invalid_states(self):
+        """Downstream table should expose valid fails and invalid sampled rows."""
+        gen = SyntheticMRRDataGenerator(seed=42)
+        _, df_downstream = gen.generate_dataset(
+            n_wafers=20,
+            n_dies_per_wafer=100,
+            p_downstream_sample=0.5,
+        )
+
+        valid_rows = df_downstream[df_downstream['test_valid'] == 1]
+        invalid_rows = df_downstream[df_downstream['test_valid'] == 0]
+
+        assert len(valid_rows) > 0
+        assert len(invalid_rows) > 0
+        assert (valid_rows['test_pass'] == 0).any()
+        assert invalid_rows['lambda_res_nm'].isna().all()
+        assert invalid_rows['q_loaded'].isna().all()
+        assert invalid_rows['insertion_loss_db'].isna().all()
     
     def test_coverage_matches_p_sample(self):
         """Test that downstream coverage roughly matches p_sample parameter."""
@@ -205,9 +224,10 @@ class TestDataGenerator:
             n_dies_per_wafer=100,
             p_downstream_sample=0.8,
         )
+        valid_downstream = df_downstream[df_downstream['test_valid'] == 1]
         
         # Merge to get both inline and downstream for same dies
-        df_merged = df_downstream.merge(
+        df_merged = valid_downstream.merge(
             df_inline[['wafer_id', 'die_id', 'wg_width_nm_meas', 'soi_thickness_nm_meas']],
             on=['wafer_id', 'die_id']
         )
@@ -234,6 +254,7 @@ class TestDataGenerator:
         )
         
         params = gen.params
+        valid_downstream = df_downstream[df_downstream['test_valid'] == 1]
         
         # Inline features
         assert df_inline['wg_width_nm_meas'].min() > 300
@@ -245,11 +266,12 @@ class TestDataGenerator:
         assert (df_inline['roughness_rms_nm_meas'] >= 0.1).all()
         
         # Downstream features
-        assert df_downstream['lambda_res_nm'].min() > params.lambda_min
-        assert df_downstream['lambda_res_nm'].max() < params.lambda_max
+        assert valid_downstream['lambda_res_nm'].min() > params.lambda_min
+        assert valid_downstream['lambda_res_nm'].max() < params.lambda_max
         
-        assert (df_downstream['q_loaded'] > 1e3).all()
+        assert (valid_downstream['q_loaded'] > 1e3).all()
         assert (df_downstream['test_pass'].isin([0, 1])).all()
+        assert (df_downstream['test_valid'].isin([0, 1])).all()
     
     def test_no_nan_values(self):
         """Test that generated data has no NaN values in critical columns."""
@@ -266,11 +288,16 @@ class TestDataGenerator:
         for col in inline_critical:
             assert not df_inline[col].isna().any(), f"NaN found in inline {col}"
         
-        downstream_critical = [
-            'wafer_id', 'die_id', 'lambda_res_nm', 'q_loaded'
-        ]
+        downstream_critical = ['wafer_id', 'die_id', 'test_pass', 'test_valid']
         for col in downstream_critical:
             assert not df_downstream[col].isna().any(), f"NaN found in downstream {col}"
+
+        valid_downstream = df_downstream[df_downstream['test_valid'] == 1]
+        invalid_downstream = df_downstream[df_downstream['test_valid'] == 0]
+
+        for col in ['lambda_res_nm', 'q_loaded', 'insertion_loss_db']:
+            assert not valid_downstream[col].isna().any(), f"NaN found in valid downstream {col}"
+            assert invalid_downstream[col].isna().all(), f"Expected NaN in invalid downstream {col}"
     
     def test_join_consistency(self):
         """Test that downstream keys are valid subset of inline keys."""
@@ -301,7 +328,9 @@ class TestDataGenerator:
         
         assert stats['n_dies_inline'] == 500
         assert 0 < stats['n_dies_downstream'] < 500
+        assert 0 < stats['n_dies_downstream_valid'] <= stats['n_dies_downstream']
         assert 0 < stats['coverage_pct'] < 100
+        assert 0 < stats['valid_coverage_pct'] < 100
         assert stats['n_wafers'] == 5
 
 
@@ -363,9 +392,10 @@ class TestMergeSources:
         )
         
         df_merged = merge_sources(df_inline, df_downstream, how='inner')
+        valid_downstream = df_downstream[df_downstream['test_valid'] == 1]
         
-        # Merged should have same length as downstream (inner join)
-        assert len(df_merged) == len(df_downstream)
+        # Merged should have same length as valid downstream rows (inner join)
+        assert len(df_merged) == len(valid_downstream)
         
         # Should have features from both sources
         assert 'wg_width_nm_meas' in df_merged.columns

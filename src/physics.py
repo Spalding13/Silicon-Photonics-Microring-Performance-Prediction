@@ -32,8 +32,8 @@ class MRRParameters:
     sigma_lambda_meas: float = 0.05
 
     q0: float = 2e5
-    k_r: float = 1e-4
-    k_d: float = 1e-6
+    k_r: float = 0.08
+    k_d: float = 1.2e-4
     sigma_q_meas: float = 0.1
 
     spatial_field_scale: float = 1.0
@@ -51,6 +51,11 @@ class MRRParameters:
     t_min: float = 200.0
     t_max: float = 260.0
 
+    lambda_spec_min: float = 1545.0
+    lambda_spec_max: float = 1553.0
+    q_spec_min: float = 145000.0
+    q_mnar_threshold: float = 140000.0
+
     def __post_init__(self) -> None:
         self._validate()
 
@@ -64,6 +69,10 @@ class MRRParameters:
             raise ValueError(f"t0 out of valid range: {self.t0}")
         if self.alpha < 0 or self.beta < 0:
             raise ValueError("Sensitivity coefficients must be non-negative")
+        if self.lambda_spec_min >= self.lambda_spec_max:
+            raise ValueError("lambda_spec_min must be smaller than lambda_spec_max")
+        if self.q_spec_min <= 0 or self.q_mnar_threshold <= 0:
+            raise ValueError("Q thresholds must be positive")
         if any(
             s < 0
             for s in [

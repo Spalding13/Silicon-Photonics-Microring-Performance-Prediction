@@ -222,50 +222,61 @@ class SyntheticMRRDataGenerator:
         p_sample: float = 0.5,
         mnar_intensity: float = 1.0,
     ) -> pd.DataFrame:
-        """Sample downstream tests and apply the simple MNAR rule."""
+        """Sample downstream tests and keep both valid and invalid sampled rows."""
         rng = np.random.RandomState(self.seed + 1000)
         
         n = len(df_all)
         
         sampled_indices = rng.choice(n, size=int(np.ceil(n * p_sample)), replace=False)
-        df_sampled = df_all.iloc[sampled_indices].copy()
-        
-        df_sampled['lambda_res_nm_meas'] = df_sampled['lambda_true'] + rng.normal(0, self.params.sigma_lambda_meas, size=len(df_sampled))
-        df_sampled['q_loaded_meas'] = np.exp(np.log(df_sampled['q_true']) + rng.normal(0, self.params.sigma_q_meas, size=len(df_sampled)))
-        df_sampled['insertion_loss_db_meas'] = 5.0 + (np.log(self.params.q0) - np.log(df_sampled['q_true'])) * 0.1
-        
-        a = -2.0
-        b = 2.0 * mnar_intensity
-        q_threshold = 5e4
-        
-        log_q_true = np.log(df_sampled['q_true'].values)
-        log_q_thresh = np.log(q_threshold)
-        
-        failure_logits = a + b * (log_q_thresh - log_q_true)
+        df_downstream = df_all.iloc[sampled_indices].copy()
+
+        df_downstream['lambda_res_nm'] = (
+            df_downstream['lambda_true']
+            + rng.normal(0, self.params.sigma_lambda_meas, size=len(df_downstream))
+        )
+        df_downstream['q_loaded'] = np.exp(
+            np.log(df_downstream['q_true'])
+            + rng.normal(0, self.params.sigma_q_meas, size=len(df_downstream))
+        )
+        df_downstream['insertion_loss_db'] = (
+            5.0 + (np.log(self.params.q0) - np.log(df_downstream['q_true'])) * 0.1
+        )
+
+        failure_bias = -2.2
+        failure_scale = 8.0 * mnar_intensity
+        log_q_true = np.log(df_downstream['q_true'].values)
+        log_q_thresh = np.log(self.params.q_mnar_threshold)
+        failure_logits = failure_bias + failure_scale * (log_q_thresh - log_q_true)
         failure_probs = 1.0 / (1.0 + np.exp(-failure_logits))
-        
-        is_valid = rng.uniform(0, 1, size=len(df_sampled)) > failure_probs
-        
-        df_downstream = df_sampled[is_valid].copy()
-        
-        cols_to_keep = [
-            'wafer_id', 'die_id', 'test_station_id',
-            'lambda_res_nm_meas', 'q_loaded_meas', 'insertion_loss_db_meas',
-        ]
-        df_downstream = df_downstream[cols_to_keep].rename(columns={
-            'lambda_res_nm_meas': 'lambda_res_nm',
-            'q_loaded_meas': 'q_loaded',
-            'insertion_loss_db_meas': 'insertion_loss_db',
-        })
-        
-        df_downstream['test_pass'] = (
-            (df_downstream['lambda_res_nm'] >= self.params.lambda_min) &
-            (df_downstream['lambda_res_nm'] <= self.params.lambda_max) &
-            (df_downstream['q_loaded'] > 1e4)
+
+        df_downstream['test_valid'] = (
+            rng.uniform(0, 1, size=len(df_downstream)) > failure_probs
         ).astype(int)
-        df_downstream['test_valid'] = 1
-        
-        return df_downstream.reset_index(drop=True)
+
+        valid_mask = df_downstream['test_valid'] == 1
+        df_downstream['test_pass'] = (
+            valid_mask
+            & df_downstream['lambda_res_nm'].between(
+                self.params.lambda_spec_min,
+                self.params.lambda_spec_max,
+            )
+            & (df_downstream['q_loaded'] >= self.params.q_spec_min)
+        ).astype(int)
+
+        invalid_cols = ['lambda_res_nm', 'q_loaded', 'insertion_loss_db']
+        df_downstream.loc[~valid_mask, invalid_cols] = np.nan
+
+        cols_to_keep = [
+            'wafer_id',
+            'die_id',
+            'test_station_id',
+            'lambda_res_nm',
+            'q_loaded',
+            'insertion_loss_db',
+            'test_pass',
+            'test_valid',
+        ]
+        return df_downstream.loc[:, cols_to_keep].reset_index(drop=True)
     
     def _generate_die_coordinates(
         self,
@@ -294,31 +305,43 @@ class SyntheticMRRDataGenerator:
         df_downstream: pd.DataFrame,
     ) -> Dict[str, Any]:
         """Return a small set of summary statistics for the two tables."""
+        valid_downstream = df_downstream[df_downstream['test_valid'] == 1].copy()
+
         stats = {
             'n_dies_inline': len(df_inline),
             'n_dies_downstream': len(df_downstream),
+            'n_dies_downstream_valid': len(valid_downstream),
+            'n_dies_downstream_invalid': int((df_downstream['test_valid'] == 0).sum()),
+            'n_dies_downstream_pass': int((valid_downstream['test_pass'] == 1).sum()),
+            'n_dies_downstream_fail': int((valid_downstream['test_pass'] == 0).sum()),
             'coverage_pct': 100.0 * len(df_downstream) / len(df_inline) if len(df_inline) else 0.0,
+            'valid_coverage_pct': 100.0 * len(valid_downstream) / len(df_inline) if len(df_inline) else 0.0,
             'n_wafers': df_inline['wafer_id'].nunique(),
             'n_lots': df_inline['lot_id'].nunique(),
         }
+        stats['pass_rate_valid_pct'] = (
+            100.0 * stats['n_dies_downstream_pass'] / len(valid_downstream)
+            if len(valid_downstream)
+            else 0.0
+        )
         
-        stats['lambda_min'] = df_downstream['lambda_res_nm'].min() if len(df_downstream) > 0 else np.nan
-        stats['lambda_max'] = df_downstream['lambda_res_nm'].max() if len(df_downstream) > 0 else np.nan
-        stats['lambda_mean'] = df_downstream['lambda_res_nm'].mean() if len(df_downstream) > 0 else np.nan
-        stats['lambda_std'] = df_downstream['lambda_res_nm'].std() if len(df_downstream) > 0 else np.nan
+        stats['lambda_min'] = valid_downstream['lambda_res_nm'].min() if len(valid_downstream) > 0 else np.nan
+        stats['lambda_max'] = valid_downstream['lambda_res_nm'].max() if len(valid_downstream) > 0 else np.nan
+        stats['lambda_mean'] = valid_downstream['lambda_res_nm'].mean() if len(valid_downstream) > 0 else np.nan
+        stats['lambda_std'] = valid_downstream['lambda_res_nm'].std() if len(valid_downstream) > 0 else np.nan
         
-        stats['q_min'] = df_downstream['q_loaded'].min() if len(df_downstream) > 0 else np.nan
-        stats['q_max'] = df_downstream['q_loaded'].max() if len(df_downstream) > 0 else np.nan
-        stats['q_mean'] = df_downstream['q_loaded'].mean() if len(df_downstream) > 0 else np.nan
-        stats['q_std'] = df_downstream['q_loaded'].std() if len(df_downstream) > 0 else np.nan
+        stats['q_min'] = valid_downstream['q_loaded'].min() if len(valid_downstream) > 0 else np.nan
+        stats['q_max'] = valid_downstream['q_loaded'].max() if len(valid_downstream) > 0 else np.nan
+        stats['q_mean'] = valid_downstream['q_loaded'].mean() if len(valid_downstream) > 0 else np.nan
+        stats['q_std'] = valid_downstream['q_loaded'].std() if len(valid_downstream) > 0 else np.nan
         
         stats['width_mean'] = df_inline['wg_width_nm_meas'].mean()
         stats['width_std'] = df_inline['wg_width_nm_meas'].std()
         stats['thickness_mean'] = df_inline['soi_thickness_nm_meas'].mean()
         stats['thickness_std'] = df_inline['soi_thickness_nm_meas'].std()
         
-        if len(df_downstream) > 1:
-            df_merged = df_downstream.merge(
+        if len(valid_downstream) > 1:
+            df_merged = valid_downstream.merge(
                 df_inline[['wafer_id', 'die_id', 'wg_width_nm_meas', 'soi_thickness_nm_meas']],
                 on=['wafer_id', 'die_id'],
                 how='left'
