@@ -17,7 +17,7 @@ INLINE_REQUIRED_COLUMNS = {
 DOWNSTREAM_REQUIRED_COLUMNS = {
     'wafer_id', 'die_id', 'test_station_id',
     'lambda_res_nm', 'q_loaded', 'insertion_loss_db',
-    'test_pass', 'test_valid',
+    'test_pass',
 }
 
 FORBIDDEN_INLINE_COLUMNS = {
@@ -32,7 +32,6 @@ FORBIDDEN_INLINE_COLUMNS = {
     'q_loaded',
     'insertion_loss_db',
     'test_pass',
-    'test_valid',
     'lambda_res_nm_meas',
     'q_loaded_meas',
     'insertion_loss_db_meas',
@@ -133,13 +132,11 @@ def validate_schemas(
         errors.append(f"Downstream wafer test missing columns: {missing_downstream}")
     
     if not df_downstream.empty:
-        critical_cols = ['wafer_id', 'die_id', 'test_pass', 'test_valid']
+        critical_cols = ['wafer_id', 'die_id', 'test_pass']
         for col in critical_cols:
             if col in df_downstream.columns and df_downstream[col].isna().any():
                 errors.append(f"Downstream test column '{col}' contains NaN values")
 
-        if 'test_valid' in df_downstream.columns and not df_downstream['test_valid'].isin([1]).all():
-            errors.append("Public downstream rows should all have test_valid = 1")
         if 'test_pass' in df_downstream.columns and not df_downstream['test_pass'].isin([0, 1]).all():
             errors.append("Downstream test column 'test_pass' must contain only 0/1 values")
 
@@ -175,14 +172,10 @@ def merge_sources(
     df_inline: pd.DataFrame,
     df_downstream: pd.DataFrame,
     how: str = 'inner',
-    only_valid_downstream: bool = True,
 ) -> pd.DataFrame:
     """Merge inline metrology with downstream test data."""
     df_inline_public = sanitize_inline_metrology(df_inline)
     df_downstream_public = df_downstream.copy()
-
-    if only_valid_downstream and 'test_valid' in df_downstream_public.columns:
-        df_downstream_public = df_downstream_public[df_downstream_public['test_valid'] == 1].copy()
 
     df_merged = df_downstream_public.merge(
         df_inline_public,

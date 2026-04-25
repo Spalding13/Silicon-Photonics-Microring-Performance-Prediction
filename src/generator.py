@@ -106,6 +106,9 @@ class SyntheticMRRDataGenerator:
         r_coords = die_lattice['r_mm'].to_numpy()
         die_rows = die_lattice['grid_row'].to_numpy()
         die_cols = die_lattice['grid_col'].to_numpy()
+        local_effects = self._compute_local_failure_effects(x_coords, y_coords, r_coords)
+        edge_q_effect = local_effects['edge_q_effect']
+        semi_ring_effect = local_effects['semi_ring_effect']
         
         field_radial = generate_radial_spatial_field(
             x_coords, y_coords, 
@@ -143,17 +146,33 @@ class SyntheticMRRDataGenerator:
             epsilon_defect_log = wafer_rng.normal(0, 0.2)
             
             w_true = (
-                self.params.w0 + delta_w_wafer + field_w[die_idx] + epsilon_w
+                self.params.w0
+                + delta_w_wafer
+                + field_w[die_idx]
+                + 1.2 * self.params.ring_failure_strength * semi_ring_effect[die_idx]
+                + epsilon_w
             )
             t_true = (
-                self.params.t0 + delta_t_wafer + field_t[die_idx] + epsilon_t
+                self.params.t0
+                + delta_t_wafer
+                + field_t[die_idx]
+                + 0.6 * self.params.ring_failure_strength * semi_ring_effect[die_idx]
+                + epsilon_t
             )
             roughness_true = np.maximum(
-                roughness_wafer_base + field_roughness[die_idx] + epsilon_roughness,
+                roughness_wafer_base
+                + field_roughness[die_idx]
+                + 0.9 * self.params.edge_failure_strength * edge_q_effect[die_idx]
+                + 0.2 * self.params.ring_failure_strength * semi_ring_effect[die_idx]
+                + epsilon_roughness,
                 0.1
             )
             defect_true = np.maximum(
-                defect_wafer_base * np.exp(epsilon_defect_log),
+                defect_wafer_base * np.exp(
+                    epsilon_defect_log
+                    + 0.35 * self.params.edge_failure_strength * edge_q_effect[die_idx]
+                    + 0.15 * self.params.ring_failure_strength * semi_ring_effect[die_idx]
+                ),
                 10.0
             )
             overlay_x_true = wafer_rng.normal(0, 1.0)
@@ -213,6 +232,8 @@ class SyntheticMRRDataGenerator:
                 'defect_true': defect_true,
                 'lambda_true': lambda_true,
                 'q_true': q_true,
+                'edge_q_effect_true': edge_q_effect[die_idx],
+                'semi_ring_effect_true': semi_ring_effect[die_idx],
                 'test_station_id': test_station_id,
             }
             die_records.append(die_record)
@@ -254,7 +275,6 @@ class SyntheticMRRDataGenerator:
         keep_mask = rng.uniform(0, 1, size=len(df_sampled)) > missing_probs
 
         df_downstream = df_sampled.loc[keep_mask].copy()
-        df_downstream['test_valid'] = 1
         df_downstream['test_pass'] = (
             df_downstream['lambda_res_nm'].between(
                 self.params.lambda_spec_min,
@@ -271,7 +291,6 @@ class SyntheticMRRDataGenerator:
             'q_loaded',
             'insertion_loss_db',
             'test_pass',
-            'test_valid',
         ]
         return df_downstream.loc[:, cols_to_keep].reset_index(drop=True)
     
@@ -317,6 +336,36 @@ class SyntheticMRRDataGenerator:
             .reset_index(drop=True)
         )
         return selected[['grid_row', 'grid_col', 'x_mm', 'y_mm', 'r_mm']]
+
+    def _compute_local_failure_effects(
+        self,
+        x_coords: np.ndarray,
+        y_coords: np.ndarray,
+        r_coords: np.ndarray,
+    ) -> Dict[str, np.ndarray]:
+        """Build simple edge and semi-ring effects for clustered failures."""
+        wafer_radius_mm = 75.0
+        edge_exclusion_mm = 5.0
+        effective_radius = wafer_radius_mm - edge_exclusion_mm
+
+        normalized_r = np.clip(r_coords / effective_radius, 0.0, 1.0)
+        theta = np.arctan2(y_coords, x_coords)
+
+        edge_q_effect = 1.0 / (
+            1.0 + np.exp(-(normalized_r - self.params.edge_failure_center) / self.params.edge_failure_width)
+        )
+
+        ring_mask = np.exp(
+            -0.5 * ((normalized_r - self.params.ring_failure_radius) / self.params.ring_failure_width) ** 2
+        )
+        ring_angle = np.deg2rad(self.params.ring_failure_angle_deg)
+        sector_mask = np.clip(np.cos(theta - ring_angle), 0.0, None) ** 2
+        semi_ring_effect = ring_mask * (0.35 + 0.65 * sector_mask)
+
+        return {
+            'edge_q_effect': edge_q_effect,
+            'semi_ring_effect': semi_ring_effect,
+        }
     
     def validate_and_summarize(
         self,
@@ -324,18 +373,13 @@ class SyntheticMRRDataGenerator:
         df_downstream: pd.DataFrame,
     ) -> Dict[str, Any]:
         """Return a small set of summary statistics for the two tables."""
-        valid_downstream = df_downstream.copy()
-
         stats = {
             'n_dies_inline': len(df_inline),
             'n_dies_downstream': len(df_downstream),
-            'n_dies_downstream_valid': len(valid_downstream),
-            'n_dies_downstream_invalid': 0,
-            'n_dies_downstream_pass': int((valid_downstream['test_pass'] == 1).sum()),
-            'n_dies_downstream_fail': int((valid_downstream['test_pass'] == 0).sum()),
+            'n_dies_downstream_pass': int((df_downstream['test_pass'] == 1).sum()),
+            'n_dies_downstream_fail': int((df_downstream['test_pass'] == 0).sum()),
             'n_dies_not_tested': max(len(df_inline) - len(df_downstream), 0),
             'coverage_pct': 100.0 * len(df_downstream) / len(df_inline) if len(df_inline) else 0.0,
-            'valid_coverage_pct': 100.0 * len(valid_downstream) / len(df_inline) if len(df_inline) else 0.0,
             'n_wafers': df_inline['wafer_id'].nunique(),
             'n_lots': df_inline['lot_id'].nunique(),
         }
@@ -344,29 +388,29 @@ class SyntheticMRRDataGenerator:
             if len(df_inline)
             else 0.0
         )
-        stats['pass_rate_valid_pct'] = (
-            100.0 * stats['n_dies_downstream_pass'] / len(valid_downstream)
-            if len(valid_downstream)
+        stats['pass_rate_pct'] = (
+            100.0 * stats['n_dies_downstream_pass'] / len(df_downstream)
+            if len(df_downstream)
             else 0.0
         )
         
-        stats['lambda_min'] = valid_downstream['lambda_res_nm'].min() if len(valid_downstream) > 0 else np.nan
-        stats['lambda_max'] = valid_downstream['lambda_res_nm'].max() if len(valid_downstream) > 0 else np.nan
-        stats['lambda_mean'] = valid_downstream['lambda_res_nm'].mean() if len(valid_downstream) > 0 else np.nan
-        stats['lambda_std'] = valid_downstream['lambda_res_nm'].std() if len(valid_downstream) > 0 else np.nan
+        stats['lambda_min'] = df_downstream['lambda_res_nm'].min() if len(df_downstream) > 0 else np.nan
+        stats['lambda_max'] = df_downstream['lambda_res_nm'].max() if len(df_downstream) > 0 else np.nan
+        stats['lambda_mean'] = df_downstream['lambda_res_nm'].mean() if len(df_downstream) > 0 else np.nan
+        stats['lambda_std'] = df_downstream['lambda_res_nm'].std() if len(df_downstream) > 0 else np.nan
         
-        stats['q_min'] = valid_downstream['q_loaded'].min() if len(valid_downstream) > 0 else np.nan
-        stats['q_max'] = valid_downstream['q_loaded'].max() if len(valid_downstream) > 0 else np.nan
-        stats['q_mean'] = valid_downstream['q_loaded'].mean() if len(valid_downstream) > 0 else np.nan
-        stats['q_std'] = valid_downstream['q_loaded'].std() if len(valid_downstream) > 0 else np.nan
+        stats['q_min'] = df_downstream['q_loaded'].min() if len(df_downstream) > 0 else np.nan
+        stats['q_max'] = df_downstream['q_loaded'].max() if len(df_downstream) > 0 else np.nan
+        stats['q_mean'] = df_downstream['q_loaded'].mean() if len(df_downstream) > 0 else np.nan
+        stats['q_std'] = df_downstream['q_loaded'].std() if len(df_downstream) > 0 else np.nan
         
         stats['width_mean'] = df_inline['wg_width_nm_meas'].mean()
         stats['width_std'] = df_inline['wg_width_nm_meas'].std()
         stats['thickness_mean'] = df_inline['soi_thickness_nm_meas'].mean()
         stats['thickness_std'] = df_inline['soi_thickness_nm_meas'].std()
         
-        if len(valid_downstream) > 1:
-            df_merged = valid_downstream.merge(
+        if len(df_downstream) > 1:
+            df_merged = df_downstream.merge(
                 df_inline[['wafer_id', 'die_id', 'wg_width_nm_meas', 'soi_thickness_nm_meas']],
                 on=['wafer_id', 'die_id'],
                 how='left'

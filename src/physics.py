@@ -56,6 +56,15 @@ class MRRParameters:
     q_spec_min: float = 145000.0
     q_mnar_threshold: float = 140000.0
 
+    edge_failure_strength: float = 1.0
+    edge_failure_center: float = 0.78
+    edge_failure_width: float = 0.06
+
+    ring_failure_strength: float = 1.0
+    ring_failure_radius: float = 0.58
+    ring_failure_width: float = 0.08
+    ring_failure_angle_deg: float = 30.0
+
     def __post_init__(self) -> None:
         self._validate()
 
@@ -73,6 +82,14 @@ class MRRParameters:
             raise ValueError("lambda_spec_min must be smaller than lambda_spec_max")
         if self.q_spec_min <= 0 or self.q_mnar_threshold <= 0:
             raise ValueError("Q thresholds must be positive")
+        if self.edge_failure_width <= 0 or self.ring_failure_width <= 0:
+            raise ValueError("Local failure widths must be positive")
+        if not (0.0 <= self.edge_failure_center <= 1.0):
+            raise ValueError("edge_failure_center must be between 0 and 1")
+        if not (0.0 <= self.ring_failure_radius <= 1.0):
+            raise ValueError("ring_failure_radius must be between 0 and 1")
+        if self.edge_failure_strength < 0 or self.ring_failure_strength < 0:
+            raise ValueError("Local failure strengths must be non-negative")
         if any(
             s < 0
             for s in [

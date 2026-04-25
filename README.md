@@ -1,332 +1,372 @@
-# Predicting Silicon Photonics Microring Performance from Inline Metrology
+# Predicting Microring Resonance from Inline Metrology
+
+## Contents
+
+- [Overview](#overview)
+- [Core Idea](#core-idea)
+- [Plain-Language Glossary](#plain-language-glossary)
+- [Data Story](#data-story)
+- [Where the Physical Model Comes From](#where-the-physical-model-comes-from)
+- [Pass/Fail Rule](#passfail-rule)
+- [Project Structure](#project-structure)
+- [Notebook Guide](#notebook-guide)
+- [How To Run](#how-to-run)
+- [What To Expect](#what-to-expect)
+- [Current Limits](#current-limits)
 
 ## Overview
 
-This project builds a small synthetic benchmark for a realistic manufacturing question:
+This project is a small synthetic data story about silicon photonics manufacturing.
 
-> Can we predict downstream optical behavior from cheaper inline metrology measurements?
+The central question is:
 
-The setting is silicon photonics. The target is the resonance wavelength of a microring
-resonator (MRR). The data is synthetic, but the structure is meant to be physically
-plausible, explainable, and easy to inspect.
+> Can cheaper inline measurements help explain and predict downstream optical test results?
 
-The code is intentionally centered on a simple idea:
+The dataset is synthetic. It is not real fab data and it is not a full physics simulator.
+Instead, it is designed to be understandable, inspectable, and realistic enough for exploratory data analysis.
 
-- resonance wavelength depends mostly on waveguide width and silicon thickness
-- wafers have smooth spatial variation, not pure random noise
-- dies sit on a regular lattice clipped by a circular wafer footprint
-- inline measurements are noisy
-- downstream test is available only for part of the wafer
-- some downstream tests pass spec and some fail spec
+The project connects three ideas:
 
-## What The Project Does
+1. **A simplified physical model**
+   Small fabrication variations in microring geometry shift the resonance wavelength.
 
-The project generates two tables:
+2. **A synthetic manufacturing dataset**
+   Every die has inline metrology data, but only some dies have downstream optical test results.
 
-1. `inline_metrology.csv`
-   One row per die with noisy inline measurements.
-2. `downstream_wafer_test.csv`
-   One row per die with a usable downstream test record.
+3. **A simple predictive baseline**
+   Linear Regression is used to test whether inline measurements contain enough signal to predict downstream resonance wavelength.
 
-Then it trains a few baseline regression models to predict:
+The main goal is clarity, not model complexity.
 
-- `lambda_res_nm`
+## Core Idea
 
-from measured inline features such as:
+Silicon photonics microring resonators are sensitive to small fabrication variations.
+If the waveguide is slightly wider, narrower, thicker, or thinner than intended, the optical resonance wavelength can shift.
 
-- `wg_width_nm_meas`
-- `soi_thickness_nm_meas`
-- `etch_depth_nm_meas`
-- `roughness_rms_nm_meas`
-- `overlay_x_nm_meas`
-- `overlay_y_nm_meas`
-- `defect_density_cm2_meas`
+In a real manufacturing flow, inline metrology is usually cheaper and more available than downstream optical testing.
+This motivates a virtual metrology question:
 
-## Core Idea In Plain Language
+> Can early process measurements help predict later optical behavior?
 
-If you want the shortest possible explanation of the generator, it is this:
+This project simulates that situation.
 
-1. Start from a nominal design:
-   `lambda0 = 1550 nm`, `w0 = 450 nm`, `t0 = 220 nm`
-2. Give each wafer a small width and thickness drift.
-3. Place dies on a regular lattice and keep only the sites that fit the wafer footprint.
-4. Add smooth spatial variation across the wafer.
-5. Add small die-level randomness.
-6. Convert the true width and thickness into a true resonance wavelength with a linear model.
-7. Add measurement noise to create the observed inline and downstream tables.
-8. Sample only part of the dies for downstream test.
-9. Apply a tighter downstream pass/fail spec to the tested dies.
+The generator first creates a hidden synthetic physical state for each die.
+From that hidden state, it creates two public data sources:
 
-That is the heart of the project. Everything else is support code around this flow.
+- an inline metrology table
+- a downstream optical test table
 
-## Physical Model
+The notebooks then inspect the data, visualize wafer-level spatial patterns, and train one simple baseline model.
 
-The resonance model is first-order and intentionally simple:
+The full story is:
+
+```text
+fabrication variation
+        ↓
+hidden true geometry
+        ↓
+inline metrology measurements + downstream optical test results
+        ↓
+EDA and wafer maps
+        ↓
+simple Linear Regression baseline
+```
+
+## Plain-Language Glossary
+
+| Term | Meaning |
+| --- | --- |
+| Wafer | A circular silicon slice containing many repeated chip sites |
+| Die | One chip location on the wafer |
+| Inline metrology | Early process measurements, available for every die here |
+| Downstream test | Later optical test data, available only for some dies |
+| Microring resonator | A small ring-shaped optical device with a resonance wavelength |
+| `lambda_res_nm` | Measured resonance wavelength in nanometers; this is the ML target |
+| `q_loaded` | Loaded quality factor; higher usually means less optical loss |
+| `test_pass` | Downstream pass/fail flag: `1` means pass, `0` means fail |
+| Not tested | A die with an inline row but no downstream row |
+
+## Data Story
+
+The generator creates two public CSV files.
+
+### 1. Inline metrology
+
+`data/synthetic_inline_metrology.csv`
+
+This table has one row per die.
+It represents earlier and cheaper measurements collected during or near fabrication.
+
+Example columns include measured waveguide width, silicon thickness, etch depth, roughness proxy, overlay, and defect-density proxy.
+
+### 2. Downstream optical test
+
+`data/synthetic_downstream_wafer_test.csv`
+
+This table has one row per die that was tested downstream.
+Every downstream row represents a usable optical test result.
+
+The three public downstream states are:
+
+- `Pass`: the die appears in the downstream table and `test_pass = 1`
+- `Fail`: the die appears in the downstream table and `test_pass = 0`
+- `Not tested`: the die appears in inline metrology but has no downstream row
+
+There is intentionally no separate `test_valid` column.
+
+A downstream row already means:
+
+> this die has a valid downstream test record.
+
+A missing downstream row means:
+
+> this die was not tested downstream.
+
+## Where the Physical Model Comes From
+
+Microring resonators have a resonance condition: light resonates when the optical round trip around the ring matches an integer number of wavelengths.
+
+A simplified resonance condition can be written as:
 
 $$
-\lambda_i = \lambda_0 + \alpha (t_i - t_0) + \beta (w_i - w_0) + \eta_i^{(\lambda)}
+m \lambda_{\mathrm{res}} = n_{\mathrm{eff}} L
 $$
 
 where:
 
-- $\lambda_i$ is the resonance wavelength for device $i$
+- $m$ is the resonance order
+- $\lambda_{\mathrm{res}}$ is the resonance wavelength
+- $n_{\mathrm{eff}}$ is the effective refractive index of the guided optical mode
+- $L$ is the physical round-trip length of the microring
+
+The important idea is that $n_{\mathrm{eff}}$ is not just a material constant.
+It depends on the waveguide geometry.
+
+Small fabrication changes can alter the effective index:
+
+- a wider waveguide changes optical confinement
+- a thicker silicon layer changes optical confinement
+- those changes shift the resonance wavelength
+
+The real electromagnetic relationship is complex and generally requires simulation.
+However, near a nominal design point, it can be approximated with a first-order Taylor-style sensitivity model.
+
+For a die $i$, the simplified resonance model is:
+
+$$
+\lambda_i =
+\lambda_0
++
+\alpha (t_i - t_0)
++
+\beta (w_i - w_0)
++
+\eta_i^{(\lambda)}
+$$
+
+where:
+
+- $\lambda_i$ is the resonance wavelength for die $i$
 - $\lambda_0$ is the nominal resonance wavelength
-- $t_i$ and $w_i$ are the true thickness and true width
-- $t_0$ and $w_0$ are the nominal thickness and width
-- $\alpha$ and $\beta$ are sensitivity coefficients
-- $\eta_i^{(\lambda)}$ is a noise term
+- $t_i$ is the true silicon thickness for die $i$
+- $w_i$ is the true waveguide width for die $i$
+- $t_0$ is the nominal silicon thickness
+- $w_0$ is the nominal waveguide width
+- $\alpha$ is the sensitivity to thickness variation
+- $\beta$ is the sensitivity to width variation
+- $\eta_i^{(\lambda)}$ is a residual noise term
 
-Default coefficients used in the project:
+This is best understood as a local approximation.
 
-- $\alpha = 1.25\,\text{nm/nm}$
-- $\beta = 1.08\,\text{nm/nm}$
+It does not claim to be a full optical simulator.
+It only says that, for small deviations around a nominal geometry, resonance shift can be approximated as a weighted sum of geometry deviations.
 
-The quality factor is modeled separately using a simple log-linear rule:
+The sensitivity coefficients are literature-inspired fixed parameters used for a synthetic benchmark.
+They are plausible for silicon photonics, but they are not calibrated to a specific confidential foundry process.
+
+### Quality-factor model
+
+The Q-factor model is also intentionally simple.
+
+The loaded quality factor is modeled with a log-linear degradation rule:
 
 $$
-\log Q_i = \log Q_0 - k_r r_i - k_d d_i + \eta_i^{(Q)}
+\log Q_i =
+\log Q_0
+-
+k_r r_i
+-
+k_d d_i
++
+\eta_i^{(Q)}
 $$
 
 where:
 
-- $Q_i$ is the loaded quality factor for device $i$
+- $Q_i$ is the loaded quality factor for die $i$
 - $Q_0$ is the nominal quality factor
 - $r_i$ is a roughness-related degradation term
 - $d_i$ is a defect-density-related degradation term
-- $k_r$ and $k_d$ are degradation coefficients
-- $\eta_i^{(Q)}$ is a noise term
+- $k_r$ controls the roughness penalty
+- $k_d$ controls the defect-density penalty
+- $\eta_i^{(Q)}$ is a residual noise term
 
-In the current project, `Q` matters in two places:
+This captures one useful direction:
 
-- as a measured downstream quantity
-- as part of the downstream pass/fail logic
+> rougher sidewalls and more defects increase optical loss, and more optical loss lowers Q.
 
-## What Is Synthetic And What Is Not
+The project uses `q_loaded` both as a measured downstream quantity and as part of the pass/fail rule.
 
-This is not real fab data.
+## Pass/Fail Rule
 
-It is a synthetic generator with:
+A tested die passes the downstream specification only if both conditions are true:
 
-- physically motivated parameter values
-- wafer-level and die-level variability
-- a regular die lattice rather than random die positions
-- noisy measurements
-- partial downstream sampling
-- downstream pass/fail outcomes plus missing downstream coverage
+$$
+\lambda_{\mathrm{spec,min}}
+\le
+\lambda_{\mathrm{res,nm}}
+\le
+\lambda_{\mathrm{spec,max}}
+$$
 
-It is useful as a controlled benchmark, not as a substitute for real process data.
+and
 
-## Data Tables
+$$
+q_{\mathrm{loaded}} \ge q_{\mathrm{spec,min}}
+$$
 
-### Inline metrology
+Otherwise, the tested die fails.
 
-One row per `(wafer_id, die_id)`.
+A die with no downstream row is not counted as pass or fail.
+It is simply not tested.
 
-Main public columns:
-
-| Column | Meaning |
-| --- | --- |
-| `wafer_id` | Wafer identifier |
-| `lot_id` | Lot identifier |
-| `die_id` | Die identifier |
-| `x_mm`, `y_mm` | Die coordinates |
-| `r_mm` | Distance from wafer center |
-| `wg_width_nm_meas` | Measured waveguide width |
-| `soi_thickness_nm_meas` | Measured silicon thickness |
-| `etch_depth_nm_meas` | Measured etch depth proxy |
-| `roughness_rms_nm_meas` | Measured roughness proxy |
-| `overlay_x_nm_meas`, `overlay_y_nm_meas` | Measured overlay components |
-| `defect_density_cm2_meas` | Measured defect proxy |
-| `metrology_valid` | Inline measurement validity flag |
-
-Important:
-
-The generator internally creates latent "true" quantities such as `w_true`, `t_true`,
-`lambda_true`, and `q_true`. These variables represent the hidden physical state of the
-synthetic device before measurement noise, test filtering, and downstream sampling are
-applied.
-
-They are intentionally **not included in the public inline table**. The modeling workflow
-should only use quantities that would realistically be observable through inline metrology.
-If latent true variables were exposed as input features, the prediction task would become
-unrealistically easy and the workflow would suffer from data leakage.
-
-### Downstream wafer test
-
-One row per die that has a usable downstream test record.
-
-Main columns:
-
-| Column | Meaning |
-| --- | --- |
-| `wafer_id`, `die_id` | Join keys |
-| `test_station_id` | Test station identifier |
-| `lambda_res_nm` | Measured resonance wavelength |
-| `q_loaded` | Measured loaded Q |
-| `insertion_loss_db` | Measured optical loss |
-| `test_pass` | Pass/fail flag |
-| `test_valid` | Compatibility flag (always `1` in the public table) |
-
-Notes:
-
-- The public downstream table contains only usable test records.
-- In the current simplified project, `test_valid` is kept for compatibility and is always `1`.
-- Dies that do not appear in this table should simply be interpreted as `Not tested`.
-
-This means a left join from inline to downstream naturally gives three downstream states:
-
-- `Pass`
-- `Fail`
-- `Not tested`
-
-That is exactly the status split used in the wafer map EDA notebook.
-
-## Models
-
-The project keeps the modeling deliberately small:
-
-- Linear regression
-- Ridge regression
-- Histogram-based gradient boosting
-
-This is enough to compare:
-
-- a model that matches the simple physical story well
-- a regularized linear variant
-- a more flexible nonlinear baseline
-
-## Evaluation
-
-The main evaluation uses `GroupKFold` by `wafer_id`.
-
-This matters because dies from the same wafer are correlated. A random row-wise split
-would make the task look easier than it really is.
-
-For regression, the merge helper simply joins inline rows with the usable downstream
-records, so the target is always defined on the merged table.
-
-## Repository Structure
+## Project Structure
 
 ```text
-pyproject.toml          packaging and project dependencies
-README.md               project overview and reading guide
+pyproject.toml          project metadata and dependencies
+README.md               project guide
 
 data/
   synthetic_inline_metrology.csv
   synthetic_downstream_wafer_test.csv
 
 src/
-  physics.py      parameters and simple physics-inspired equations
-  generator.py    synthetic data generation and downstream sampling
-  utils.py        CSV I/O, schema checks, merge helpers, and plots
-  models.py       baseline models
+  physics.py            parameters and simple physics-inspired equations
+  generator.py          synthetic wafer, die, and downstream test generation
+  utils.py              CSV I/O, schema checks, merge helpers, and plots
 
 tests/
-  test_generator.py     generator, schema, lattice, and model tests
+  test_generator.py     generator, schema, spatial effect, and utility tests
 
 notebooks/
-  analysis.ipynb                    end-to-end modeling notebook
-  wafermap_downstream_status.ipynb  wafer-map EDA notebook
+  01_data_eda.ipynb        data generation, physical model explanation, and EDA
+  02_wafermap_story.ipynb  wafer-map story for pass/fail/not-tested status
+  03_baseline_model.ipynb  minimal Linear Regression baseline
 ```
 
 ## Notebook Guide
 
-The two notebooks have different jobs and are meant to complement each other.
+The notebooks are meant to be read in order.
 
-### `analysis.ipynb`
+```text
+01_data_eda.ipynb
+        ↓
+02_wafermap_story.ipynb
+        ↓
+03_baseline_model.ipynb
+```
 
-This is the main end-to-end notebook. It:
+### `01_data_eda.ipynb`
 
-- follows the sequence:
-  setup -> physical model -> data generation -> summary -> EDA -> model training -> experiments -> discussion
-- defines the physical parameters
-- generates the synthetic dataset
-- saves the public CSV files into `data/`
-- prints summary statistics
-- runs EDA for the inline and downstream variables
-- trains the three baseline models
-- evaluates them with `GroupKFold` by `wafer_id`
-- runs a simple noise robustness experiment
+Start here.
 
-If you want the full project story in one place, start here.
+This notebook explains the data, generates the CSV files, validates the schemas, and performs basic EDA.
 
-### `wafermap_downstream_status.ipynb`
+It answers:
 
-This notebook is narrower and more visual. It:
+- What is a wafer?
+- What is a die?
+- What is inline metrology?
+- What is downstream optical testing?
+- Where do the resonance and Q formulas come from?
+- How many dies are pass, fail, and not tested?
+- Do inline width and thickness measurements explain `lambda_res_nm`?
 
-- loads the saved CSV files from `data/`
-- left-joins inline and downstream tables
-- assigns each die one of three public downstream states:
-  `Pass downstream spec`, `Fail downstream spec`, or `Not tested downstream`
-- prints a reason breakdown for those states
-- shows a single-wafer `lambda_res_nm` die map
-- shows all wafers as categorical wafer maps
+### `02_wafermap_story.ipynb`
 
-If you want to understand spatial coverage and downstream status at the die level, start here.
+This notebook is the main spatial EDA artifact.
 
-## How To Read The Project
+It answers:
 
-If you want to understand the project quickly, this is the best order:
+- Where on each wafer do we have tested pass dies?
+- Where do tested dies fail?
+- Where do we have no downstream test coverage?
+- Do failures look clustered near edges or local regions?
+- Does resonance wavelength show spatial structure?
 
-1. Read `src/physics.py`
-   This gives you the parameter names and the two core equations.
-2. Read `src/generator.py`
-   Focus on `_generate_wafer()` and `_apply_downstream_sampling()`.
-3. Open `notebooks/analysis.ipynb`
-   This shows the main workflow: generation, EDA, modeling, and evaluation.
-4. Open `notebooks/wafermap_downstream_status.ipynb`
-   This shows how to inspect die-level wafer maps from the saved CSV files.
-5. Read `tests/test_generator.py`
-   This is a good way to see what behavior the code is supposed to guarantee.
-   It also documents the current lattice-based wafer layout assumption.
+The maps draw real die squares on a circular wafer footprint.
+Empty corners are expected because the die grid is clipped by the wafer boundary.
+
+### `03_baseline_model.ipynb`
+
+This notebook keeps ML deliberately small.
+
+It trains one Linear Regression baseline using public inline measurements to predict `lambda_res_nm` for dies with downstream test results.
+
+It uses a wafer holdout split so the test set contains entire wafers, not random rows from the same wafers.
+
+The notebook stops after a simple baseline on purpose.
+More model experiments would add complexity without supporting the main project goal.
 
 ## How To Run
 
+Install the project in editable mode:
+
 ```bash
 pip install -e .
-jupyter notebook notebooks/analysis.ipynb
 ```
 
-The main notebook regenerates the synthetic data, runs the models, and writes the public
-CSV files into `data/`.
-
-If you want to open the wafer-map notebook directly after that, use:
+Then open the notebooks in order:
 
 ```bash
-jupyter notebook notebooks/wafermap_downstream_status.ipynb
+jupyter notebook notebooks/01_data_eda.ipynb
+jupyter notebook notebooks/02_wafermap_story.ipynb
+jupyter notebook notebooks/03_baseline_model.ipynb
 ```
 
-The wafer map notebook assumes the CSV files already exist in `data/`.
+The first notebook regenerates and saves the CSV files.
+The second and third notebooks load the saved CSV files from `data/`.
 
-## What To Expect From The Results
+## What To Expect
 
-Because the target is generated from a mostly linear width/thickness relationship:
+The EDA should show:
 
-- linear regression should perform very well
-- ridge should usually behave almost the same
-- the nonlinear model is useful as a comparison, not necessarily the winner
+- a regular circular die layout
+- partial downstream coverage
+- a mix of pass and fail among tested dies
+- not-tested dies visible after joining downstream back to inline
+- spatial structure from edge and semi-ring effects
+- a clear relationship between inline geometry and resonance wavelength
 
-If you evaluate by wafer groups, performance should be lower than with a random split.
-That is expected and is part of the point of the project.
-
-The downstream table should also contain a visible mix of:
-
-- tested pass results
-- tested fail results
-- not tested dies visible only after left-joining back to inline
-
-This makes wafer maps and missingness analysis more informative.
+The baseline model should perform reasonably well because the target is intentionally generated from a simple width/thickness relationship.
 
 ## Current Limits
 
-The project is intentionally modest in scope.
+This project is intentionally simplified.
 
-It does not try to model:
+It does not use confidential fab data and it is not calibrated to a specific manufacturing process. Instead, it uses synthetic data and physically motivated assumptions to demonstrate the structure of a virtual metrology workflow.
 
+The project does not model:
+
+- real fab calibration
 - image-based metrology
-- deep learning pipelines
-- advanced uncertainty quantification
-- full process physics
-- real production data artifacts
+- full electromagnetic simulation
+- advanced optical device physics
+- deep learning
+- uncertainty quantification
+- production-grade test operations
+- post-fabrication thermal tuning control
 
-The goal is a clear, explainable synthetic benchmark that is easy to inspect.
+These limits are intentional.
+
+The goal is not to build a production-ready silicon photonics simulator. The goal is to create a readable synthetic benchmark that connects fabrication variation, inline metrology, downstream optical testing, spatial wafer patterns, and a simple predictive baseline.

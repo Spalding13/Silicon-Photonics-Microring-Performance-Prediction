@@ -15,7 +15,6 @@ import pandas as pd
 
 from src.physics import MRRParameters, compute_resonance_wavelength, compute_log_q
 from src.generator import SyntheticMRRDataGenerator
-from src.models import RidgeRegressionModel
 from src.utils import (
     validate_schemas,
     merge_sources,
@@ -168,9 +167,10 @@ class TestDataGenerator:
         required_cols = {
             'wafer_id', 'die_id', 'test_station_id',
             'lambda_res_nm', 'q_loaded', 'insertion_loss_db',
-            'test_pass', 'test_valid',
+            'test_pass',
         }
         assert required_cols.issubset(set(df_downstream.columns))
+        assert 'test_valid' not in df_downstream.columns
         assert len(df_downstream) <= 100
         assert len(df_downstream) > 0
 
@@ -184,7 +184,6 @@ class TestDataGenerator:
         )
 
         assert len(df_downstream) > 0
-        assert (df_downstream['test_valid'] == 1).all()
         assert (df_downstream['test_pass'] == 1).any()
         assert (df_downstream['test_pass'] == 0).any()
         assert df_downstream['lambda_res_nm'].notna().all()
@@ -207,6 +206,51 @@ class TestDataGenerator:
         assert len(y_values) == unique_rows
         assert np.allclose(np.diff(x_values), np.diff(x_values)[0])
         assert np.allclose(np.diff(y_values), np.diff(y_values)[0])
+
+    def test_local_failure_effects_are_spatially_structured(self):
+        """Edge and semi-ring effects should vary predictably across the wafer."""
+        gen = SyntheticMRRDataGenerator(seed=42)
+        lattice = gen._generate_die_coordinates(400)
+        effects = gen._compute_local_failure_effects(
+            lattice['x_mm'].to_numpy(),
+            lattice['y_mm'].to_numpy(),
+            lattice['r_mm'].to_numpy(),
+        )
+
+        normalized_r = lattice['r_mm'].to_numpy() / lattice['r_mm'].max()
+        edge_effect = effects['edge_q_effect']
+        ring_effect = effects['semi_ring_effect']
+
+        inner_mask = normalized_r <= 0.3
+        outer_mask = normalized_r >= 0.8
+        ring_mask = np.abs(normalized_r - gen.params.ring_failure_radius) <= gen.params.ring_failure_width
+
+        assert edge_effect[outer_mask].mean() > edge_effect[inner_mask].mean()
+        assert ring_effect[ring_mask].mean() > ring_effect[inner_mask].mean()
+
+    def test_outer_dies_have_higher_failure_pressure(self):
+        """Local failure effects should increase edge risk in the public data."""
+        gen = SyntheticMRRDataGenerator(seed=42)
+        df_inline, df_downstream = gen.generate_dataset(
+            n_wafers=20,
+            n_dies_per_wafer=400,
+            p_downstream_sample=0.5,
+        )
+        df_merged = df_inline.merge(
+            df_downstream[['wafer_id', 'die_id', 'test_pass']],
+            on=['wafer_id', 'die_id'],
+            how='left',
+        )
+        df_merged['tested'] = df_merged['test_pass'].notna()
+        df_merged['failed'] = df_merged['test_pass'].eq(0)
+
+        r25 = df_merged['r_mm'].quantile(0.25)
+        r75 = df_merged['r_mm'].quantile(0.75)
+        inner = df_merged[df_merged['r_mm'] <= r25]
+        outer = df_merged[df_merged['r_mm'] >= r75]
+
+        assert outer['tested'].mean() < inner['tested'].mean()
+        assert outer['failed'].mean() > inner['failed'].mean()
     
     def test_coverage_matches_p_sample(self):
         """Test that downstream coverage roughly matches p_sample parameter."""
@@ -284,7 +328,6 @@ class TestDataGenerator:
         
         assert (df_downstream['q_loaded'] > 1e3).all()
         assert (df_downstream['test_pass'].isin([0, 1])).all()
-        assert (df_downstream['test_valid'] == 1).all()
     
     def test_no_nan_values(self):
         """Test that generated data has no NaN values in critical columns."""
@@ -301,11 +344,9 @@ class TestDataGenerator:
         for col in inline_critical:
             assert not df_inline[col].isna().any(), f"NaN found in inline {col}"
         
-        downstream_critical = ['wafer_id', 'die_id', 'lambda_res_nm', 'q_loaded', 'insertion_loss_db', 'test_pass', 'test_valid']
+        downstream_critical = ['wafer_id', 'die_id', 'lambda_res_nm', 'q_loaded', 'insertion_loss_db', 'test_pass']
         for col in downstream_critical:
             assert not df_downstream[col].isna().any(), f"NaN found in downstream {col}"
-
-        assert (df_downstream['test_valid'] == 1).all()
     
     def test_join_consistency(self):
         """Test that downstream keys are valid subset of inline keys."""
@@ -336,11 +377,8 @@ class TestDataGenerator:
         
         assert stats['n_dies_inline'] == 500
         assert 0 < stats['n_dies_downstream'] < 500
-        assert stats['n_dies_downstream_valid'] == stats['n_dies_downstream']
-        assert stats['n_dies_downstream_invalid'] == 0
         assert stats['n_dies_not_tested'] == 500 - stats['n_dies_downstream']
         assert 0 < stats['coverage_pct'] < 100
-        assert stats['valid_coverage_pct'] == stats['coverage_pct']
         assert stats['n_wafers'] == 5
 
 
@@ -432,24 +470,6 @@ class TestMergeSources:
         assert 'test_station_id' in df_merged.columns
         assert 'test_station_id_x' not in df_merged.columns
         assert 'test_station_id_y' not in df_merged.columns
-
-
-class TestModels:
-    """Test model wrappers."""
-
-    def test_ridge_regression_supports_group_aware_fit(self):
-        """Ridge should accept group labels for internal alpha selection."""
-        rng = np.random.RandomState(42)
-        X = rng.normal(size=(40, 3))
-        groups = np.repeat(np.array(['W001', 'W002', 'W003', 'W004']), 10)
-        y = 2.0 * X[:, 0] - 0.5 * X[:, 1] + rng.normal(scale=0.05, size=40)
-
-        model = RidgeRegressionModel(alphas=np.array([0.01, 0.1, 1.0]), cv_splits=4)
-        model.fit(X, y, groups=groups)
-        preds = model.predict(X[:5])
-
-        assert model.selected_alpha_ in {0.01, 0.1, 1.0}
-        assert preds.shape == (5,)
 
 
 if __name__ == '__main__':
