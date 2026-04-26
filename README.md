@@ -266,16 +266,11 @@ The real electromagnetic relationship is complex and generally requires simulati
 
 For a die $i$, the simplified resonance model is:
 
+
 $$
-\log Q_i =
-\log Q_0
--
-k_r r_i
--
-k_d d_i
-+
-\eta_i^{(Q)}
+\log Q_i = \log Q_0 - k_r r_i - k_d d_i + \eta_i^{(Q)}
 $$
+
 
 where:
 
