@@ -43,7 +43,7 @@ The main goal is clarity, not model complexity. Here is a plain-language summary
 | Wafer | A circular silicon slice containing many repeated chip sites |
 | Die | One chip location on the wafer |
 | Lot | A group of wafers that share common process fingerprint |
-| Inline metrology | Early process measurements, available for every die here |
+| Inline metrology | Early process measurements, available for every die |
 | Downstream test | Later optical test data, available only for some dies |
 | Microring resonator | A small ring-shaped optical device with a resonance wavelength |
 | `lambda_res_nm` | Measured resonance wavelength in nanometers; this is the main ML target |
@@ -267,14 +267,14 @@ The real electromagnetic relationship is complex and generally requires simulati
 For a die $i$, the simplified resonance model is:
 
 $$
-\lambda_i =
-\lambda_0
+\log Q_i =
+\log Q_0
+-
+k_r r_i
+-
+k_d d_i
 +
-\alpha (t_i - t_0)
-+
-\beta (w_i - w_0)
-+
-\eta_i^{(\lambda)}
+\eta_i^{(Q)}
 $$
 
 where:
