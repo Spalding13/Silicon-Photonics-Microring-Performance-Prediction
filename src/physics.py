@@ -7,8 +7,8 @@ import numpy as np
 
 
 @dataclass
-class MRRParameters:
-    """Configuration for the synthetic MRR generator."""
+class SyntheticMRRProcessConfig:
+    """Configuration for the synthetic MRR manufacturing process."""
 
     lambda0: float = 1550.0
     w0: float = 450.0

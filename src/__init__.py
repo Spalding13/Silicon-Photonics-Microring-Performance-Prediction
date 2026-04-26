@@ -8,10 +8,10 @@ microring resonator performance prediction from inline metrology.
 __version__ = "0.1.0"
 __author__ = "Data Science Project Team"
 
-from .physics import MRRParameters
+from .physics import SyntheticMRRProcessConfig
 from .generator import SyntheticMRRDataGenerator
 
 __all__ = [
-    "MRRParameters",
+    "SyntheticMRRProcessConfig",
     "SyntheticMRRDataGenerator",
 ]

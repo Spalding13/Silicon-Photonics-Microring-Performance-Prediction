@@ -5,7 +5,7 @@ import pandas as pd
 from typing import Tuple, Optional, Dict, Any
 
 from .physics import (
-    MRRParameters,
+    SyntheticMRRProcessConfig,
     compute_resonance_wavelength,
     compute_log_q,
     generate_radial_spatial_field,
@@ -20,10 +20,10 @@ class SyntheticMRRDataGenerator:
     
     def __init__(
         self,
-        params: Optional[MRRParameters] = None,
+        params: Optional[SyntheticMRRProcessConfig] = None,
         seed: int = 42,
     ):
-        self.params = params or MRRParameters()
+        self.params = params or SyntheticMRRProcessConfig()
         self.seed = seed
     
     def generate_dataset(
