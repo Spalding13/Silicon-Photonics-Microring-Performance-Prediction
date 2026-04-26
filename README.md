@@ -264,13 +264,11 @@ Small fabrication changes can alter the effective index:
 
 The real electromagnetic relationship is complex and generally requires simulation. However, near a nominal design point, it can be approximated with a first-order Taylor-style sensitivity model.
 
-For a die $i$, the simplified resonance model is:
+The loaded quality factor is modeled with a log-linear degradation rule:
 
-
-$$
-\log Q_i = \log Q_0 - k_r r_i - k_d d_i + \eta_i^{(Q)}
-$$
-
+<p align="center">
+  <strong>log(Q<sub>i</sub>) = log(Q<sub>0</sub>) − k<sub>r</sub> r<sub>i</sub> − k<sub>d</sub> d<sub>i</sub> + η<sub>i</sub><sup>(Q)</sup></strong>
+</p>
 
 where:
 
@@ -296,16 +294,7 @@ The Q-factor model is also intentionally simple.
 
 The loaded quality factor is modeled with a log-linear degradation rule:
 
-$$
-\log Q_i =
-\log Q_0
--
-k_r r_i
--
-k_d d_i
-+
-\eta_i^{(Q)}
-$$
+$$\log Q_i = \log Q_0 - k_r r_i - k_d d_i + \eta_i^{(Q)}$$
 
 where:
 
