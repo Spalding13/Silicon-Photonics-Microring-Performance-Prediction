@@ -232,38 +232,86 @@ def plot_inline_vs_resonance(
     df_merged: pd.DataFrame,
     w0: float = 450.0,
     lambda0: float = 1550.0,
-    figsize: Tuple[int, int] = (10, 6),
+    figsize: Tuple[int, int] = (11, 6),
 ) -> None:
-    """Plot the main width-to-resonance relationship."""
-    if 'wg_width_nm_meas' not in df_merged.columns or 'lambda_res_nm' not in df_merged.columns:
+    """Plot measured inline width deviation against downstream resonance shift.
+
+    Points are colored by wafer_id when wafer_id is available.
+    """
+    required_cols = {"wg_width_nm_meas", "lambda_res_nm"}
+
+    if not required_cols.issubset(df_merged.columns):
         print("Warning: Required columns not found for plot_inline_vs_resonance")
         return
-    
-    x = df_merged['wg_width_nm_meas'] - w0
-    y = df_merged['lambda_res_nm'] - lambda0
-    
+
+    x = df_merged["wg_width_nm_meas"] - w0
+    y = df_merged["lambda_res_nm"] - lambda0
+
+    valid = x.notna() & y.notna()
+
     fig, ax = plt.subplots(figsize=figsize)
-    
-    if 'wafer_id' in df_merged.columns:
-        wafer_ids = df_merged['wafer_id'].unique()
+
+    if "wafer_id" in df_merged.columns:
+        wafer_ids = sorted(df_merged.loc[valid, "wafer_id"].unique())
         colors = plt.cm.tab20(np.linspace(0, 1, len(wafer_ids)))
+
         for wafer_id, color in zip(wafer_ids, colors):
-            mask = df_merged['wafer_id'] == wafer_id
-            ax.scatter(x[mask], y[mask], s=20, alpha=0.6, label=wafer_id, color=color)
+            mask = valid & (df_merged["wafer_id"] == wafer_id)
+
+            ax.scatter(
+                x[mask],
+                y[mask],
+                s=20,
+                alpha=0.6,
+                color=color,
+                label=f"Wafer {wafer_id}",
+            )
     else:
-        ax.scatter(x, y, s=20, alpha=0.6)
-    
-    z = np.polyfit(x.dropna(), y[x.notna()], 1)
+        wafer_ids = []
+        ax.scatter(
+            x[valid],
+            y[valid],
+            s=20,
+            alpha=0.6,
+            label="Tested dies",
+        )
+
+    # Linear fit over all tested dies
+    z = np.polyfit(x[valid], y[valid], 1)
     p = np.poly1d(z)
-    x_line = np.linspace(x.min(), x.max(), 100)
-    ax.plot(x_line, p(x_line), 'r--', linewidth=2, label=f'Linear fit: y={z[0]:.3f}x+{z[1]:.3f}')
-    
-    ax.set_xlabel('Measured width deviation (nm)', fontsize=12)
-    ax.set_ylabel('Measured resonance shift (nm)', fontsize=12)
-    ax.set_title('Inline Width vs Downstream Resonance (Physics Validation)', fontsize=13)
+
+    x_line = np.linspace(x[valid].min(), x[valid].max(), 100)
+
+    ax.plot(
+        x_line,
+        p(x_line),
+        "r--",
+        linewidth=2,
+        label=f"Linear fit: y = {z[0]:.3f}x + {z[1]:.3f}",
+    )
+
+    ax.set_xlabel("Measured width deviation from nominal (nm)", fontsize=12)
+    ax.set_ylabel("Measured resonance shift from nominal (nm)", fontsize=12)
+    ax.set_title(
+        "Measured Width Deviation vs Downstream Resonance Shift",
+        fontsize=13,
+    )
+
     ax.grid(True, alpha=0.3)
-    if len(wafer_ids) <= 10:
-        ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=9)
-    
+
+    # Legend outside the plot
+    if "wafer_id" in df_merged.columns:
+        ax.legend(
+            title="Color = wafer_id",
+            bbox_to_anchor=(1.02, 1),
+            loc="upper left",
+            fontsize=8,
+            title_fontsize=9,
+            ncol=1,
+            frameon=True,
+        )
+    else:
+        ax.legend(loc="best", fontsize=9)
+
     plt.tight_layout()
     plt.show()
