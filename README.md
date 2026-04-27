@@ -432,40 +432,13 @@ jupyter notebook notebooks/03_baseline_model.ipynb
 
 The first notebook regenerates and saves the CSV files. The second and third notebooks load the saved CSV files from `data/`.
 
-## What To Expect
+## References
 
-The EDA should show:
+- Bogaerts, W., De Heyn, P., Van Vaerenbergh, T., De Vos, K., Selvaraja, S. K., Claes, T., Dumon, P., Bienstman, P., Van Thourhout, D., & Baets, R. (2012). *Silicon microring resonators*. Laser & Photonics Reviews, 6(1), 47–73.  
+  Used as background for microring resonator theory, sensitivity to fabrication perturbations, and common applications.
 
-- a regular circular die layout
-- partial downstream coverage
-- a production-like mix of pass and fail among tested dies
-- not-tested dies visible after joining downstream back to inline
-- mild lot-to-lot variation
-- reduced but still present wafer-to-wafer variation
-- spatial structure from edge and semi-ring effects
-- a clear relationship between inline geometry and resonance wavelength
+- Chrostowski, L., & Hochberg, M. (2015). *Silicon Photonics Design: From Devices to Systems*. Cambridge University Press.  
+  Used as general silicon photonics design, fabrication, and testing background.
 
-The wafer maps should show that downstream behavior is spatially inspectable. Edge regions should tend to have worse downstream behavior, but the effect should not be deterministic.
-
-The baseline model should perform reasonably well because the target is intentionally generated from a simple width/thickness relationship.
-
-## Current Limits
-
-This project is intentionally simplified.
-
-It does not use confidential fab data and it is not calibrated to a specific manufacturing process. Instead, it uses synthetic data and physically motivated assumptions to demonstrate the structure of a virtual metrology workflow.
-
-The project does not model:
-
-- real fab calibration
-- image-based metrology
-- full electromagnetic simulation
-- advanced optical device physics
-- deep learning
-- uncertainty quantification
-- production-grade test operations
-- post-fabrication thermal tuning control
-
-These limits are intentional.
-
-The goal is not to build a production-ready silicon photonics simulator. The goal is to create a readable synthetic benchmark that connects fabrication variation, inline metrology, downstream optical testing, spatial wafer patterns, and a simple predictive baseline.
+- scikit-learn documentation: `DummyRegressor`, `LinearRegression`, `StandardScaler`, and regression metrics.  
+  Used for the baseline machine-learning implementation and metric interpretation.
