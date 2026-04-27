@@ -38,24 +38,24 @@ The main goal is clarity, not model complexity. Here is a plain-language summary
 
 ## Plain-Language Glossary
 
-| Term | Meaning |
-| --- | --- |
-| Wafer | A circular silicon slice containing many repeated chip sites |
-| Die | One chip location on the wafer |
-| Lot | A group of wafers that share common process fingerprint |
-| Inline metrology | Early process measurements, available for every die |
-| Downstream test | Later optical test data, available only for some dies |
-| Microring resonator | A small ring-shaped optical device with a resonance wavelength |
-| `lambda_res_nm` | Measured resonance wavelength in nanometers; this is the main ML target |
-| `q_loaded` | Loaded quality factor; higher usually means less optical loss |
-| `test_pass` | Downstream pass/fail flag: `1` means pass, `0` means fail |
-| Not tested | A die with an inline row but no downstream row |
+| Term                | Meaning                                                                 |
+| ------------------- | ----------------------------------------------------------------------- |
+| Wafer               | A circular silicon slice containing many repeated chip sites            |
+| Die                 | One chip location on the wafer                                          |
+| Lot                 | A group of wafers that share common process fingerprint                 |
+| Inline metrology    | Early process measurements, available for every die                     |
+| Downstream test     | Later optical test data, available only for some dies                   |
+| Microring resonator | A small ring-shaped optical device with a resonance wavelength          |
+| `lambda_res_nm`     | Measured resonance wavelength in nanometers; this is the main ML target |
+| `q_loaded`          | Loaded quality factor; higher usually means less optical loss           |
+| `test_pass`         | Downstream pass/fail flag: `1` means pass, `0` means fail               |
+| Not tested          | A die with an inline row but no downstream row                          |
 
 ## Core Idea
 
 Silicon photonics microring resonators are small ring-shaped optical devices built on a silicon photonics platform.
 
-A microring resonator works by guiding light around a closed-loop waveguide. At specific wavelengths, the optical field constructively interferes after one round trip around the ring. Those wavelengths are called *resonance wavelengths*.
+A microring resonator works by guiding light around a closed-loop waveguide. At specific wavelengths, the optical field constructively interferes after one round trip around the ring. Those wavelengths are called _resonance wavelengths_.
 
 Microring resonators are useful because they can act as compact wavelength-selective components. In practice, they are used for tasks such as:
 
@@ -101,8 +101,6 @@ EDA and wafer maps
         ↓
 simple Linear Regression baseline
 ```
-
-
 
 ## Data Story
 
@@ -264,11 +262,17 @@ Small fabrication changes can alter the effective index:
 
 The real electromagnetic relationship is complex and generally requires simulation. However, near a nominal design point, it can be approximated with a first-order Taylor-style sensitivity model.
 
-The loaded quality factor is modeled with a log-linear degradation rule:
 
-<p align="center">
-  <strong>log(Q<sub>i</sub>) = log(Q<sub>0</sub>) − k<sub>r</sub> r<sub>i</sub> − k<sub>d</sub> d<sub>i</sub> + η<sub>i</sub><sup>(Q)</sup></strong>
-</p>
+$$
+\lambda_i =
+\lambda_0
++
+\alpha (t_i - t_0)
++
+\beta (w_i - w_0)
++
+\eta_i^{(\lambda)}
+$$
 
 where:
 
@@ -399,7 +403,6 @@ It answers:
 - Where do we have no downstream test coverage?
 - Do failures look clustered near edges or local regions?
 - Do continuous downstream measurements show spatial structure?
-
 
 ### `03_baseline_model.ipynb`
 
